@@ -1,0 +1,219 @@
+package main
+
+import (
+        "fmt"
+    "path/filepath"
+    "flag"
+    "os"
+    "regexp"
+
+        "github.com/xuri/excelize/v2"
+)
+
+var (
+     argsVerbose bool
+     argsHelp bool
+     argsPrintRow bool
+     argsBeforeRow int
+     argsAfterRow int
+     argsPrevCol int
+     argsNextCol int
+     argsPrintFiles bool
+     argsPrintSheets bool
+     argsCol string
+     argsCellColor string
+ )
+
+func init(){
+    flag.BoolVar(&argsHelp,"h",false, "help")
+    flag.BoolVar(&argsPrintRow,"printrow",false, "...")
+    flag.BoolVar(&argsPrintFiles,"printfiles",false, "...")
+    flag.BoolVar(&argsPrintSheets,"printsheets",false, "...")
+    flag.BoolVar(&argsVerbose,"verbose",false, "...")
+    flag.IntVar(&argsBeforeRow,"beforerow",0,"...")
+    flag.IntVar(&argsAfterRow,"afterrow",0,"...")
+    flag.IntVar(&argsPrevCol,"prevcol",0,"...")
+    flag.IntVar(&argsNextCol,"nextcol",0,"...")
+    flag.StringVar(&argsCol,"col","","...")
+    flag.StringVar(&argsCellColor,"cellcolor","","...")
+}
+
+func main(){
+    flag.Parse()
+
+    if argsHelp {
+        fmt.Fprintf(os.Stderr,"Usage: grep [OPTION]... PATTERNS [FILE]... \n")
+        os.Exit(1)
+    }
+
+    if flag.NArg() < 2{
+        fmt.Fprintf(os.Stderr,"Usage: grep [OPTION]... PATTERNS [FILE]... \n")
+        os.Exit(1)
+    }
+
+    regex,err := regexp.CompilePOSIX(flag.Arg(0))
+    if err != nil {
+        fmt.Fprintf(os.Stderr,"%s",err)
+    }
+
+    files,err := filepath.Glob(flag.Arg(1))
+    if err != nil {
+        fmt.Fprintf(os.Stderr,"%s",err)
+    }
+    for _,f := range files{
+        if argsPrintFiles {
+            fmt.Println(f)
+        }
+        if argsVerbose {
+            fmt.Printf("[File: %v]\n",f)
+        }
+        grep(regex,f)
+    }
+
+    os.Exit(0)
+}
+
+func grep(regex *regexp.Regexp,file string){
+    f, err := excelize.OpenFile(file)
+    if err != nil {
+        fmt.Fprintf(os.Stderr,"grep: %s: No such file or directory\n",file)
+        return
+    }
+    defer func() {
+                if err := f.Close(); err != nil {
+                        fmt.Fprintf(os.Stderr, "'%s' close failed.\n", file)
+                }
+        }()
+    //fmt.Println(pattern)GetSheetList
+
+    sheets := f.GetSheetList()
+        for _, s_name := range sheets {
+        //fmt.Println(s_name)
+        if argsPrintSheets {
+            fmt.Printf("%s\n",s_name)
+            continue
+        }
+
+        if argsVerbose{
+            fmt.Printf("[Sheet: %s]\n",s_name)
+        }
+
+
+        rows, err := f.GetRows(s_name)
+        if err != nil {
+                        fmt.Fprintf(os.Stderr, "'%s': GetRows failed...\n", file)
+                        continue
+                }
+
+        for row_idx, r := range rows {
+                        for col_idx, cell := range r {
+
+                if len(argsCellColor)>0{
+                    //fmt.Println(argsCellColor)
+                    //color, err := f.GetCellValue(s_name, cell)
+                    //cname, err := excelize.CoordinatesToCellName(colIdx + 1, rowIdx + 1)
+                    cname, _ := excelize.CoordinatesToCellName(col_idx + 1, row_idx + 1)
+                    styleId, err := f.GetCellStyle(s_name, cname)
+                        if err != nil {
+                                fmt.Println(err)
+                                return
+                        }
+                    style,_ := f.GetStyle(styleId)
+                    if len(style.Fill.Color)>0  {
+                        //fmt.Printf("セル %s の色: %v:%v\n", cname, styleId, style.Fill.Color)
+                        if style.Fill.Color[0] == argsCellColor {
+                            if argsVerbose {
+                                fmt.Printf("[セル %s の色: %v, ]\n", cname, style.Fill.Color)
+                            }
+                                            if regex.MatchString(cell) {
+                                    matched(file, s_name, row_idx, col_idx, cell)
+                            }
+                        }
+                    }
+                    continue
+                }
+
+                if len(argsCol)>0 {
+                    colNum, err := excelize.ColumnNameToNumber(argsCol)
+                    if err  != nil {
+                                    fmt.Fprintf(os.Stderr, "'%s': not ColumnName.\n", argsCol)
+                        return
+                    }
+                    //fmt.Printf("%s to %d\n",argsCol,colNum)
+                    if col_idx +1 == colNum {
+                        if len(cell)>0 {
+                                            if regex.MatchString(cell) {
+                                                    matched(file, s_name, row_idx, col_idx, cell)
+                            }
+                        }
+                    }
+                    continue
+                }
+
+                                if regex.MatchString(cell) {
+
+                    for i := argsPrevCol;i>0;i--{
+                        for j := argsBeforeRow;j>0;j--{
+                            if col_idx-j>0&&len(rows[row_idx-i]) > col_idx-j{
+                                matched(file, s_name, row_idx-i, col_idx-j, rows[row_idx-i][col_idx-j])
+                            }
+                        }
+                        if len(rows[row_idx-i]) > col_idx{
+                            matched(file, s_name, row_idx-i, col_idx, rows[row_idx-i][col_idx])
+                        }
+                        for j := 1; argsAfterRow>=j;j++{
+                            if len(rows[row_idx-i]) > col_idx+j{
+                                matched(file, s_name, row_idx-i, col_idx+j, rows[row_idx-i][col_idx+j])
+                            }
+                        }
+                    }
+
+                    for i := argsBeforeRow;i>0;i--{
+                        if col_idx-i>0 && len(rows[row_idx]) > col_idx-i{
+                            matched(file, s_name, row_idx, col_idx-i, rows[row_idx][col_idx-i])
+                        }
+                    }
+                                        matched(file, s_name, row_idx, col_idx, cell)
+                    for i := 1; argsAfterRow>=i;i++{
+                        if len(rows[row_idx])>col_idx+i{
+                            matched(file, s_name, row_idx, col_idx+i, rows[row_idx][col_idx+i])
+                        }
+                    }
+
+                    for i := 1;i<= argsNextCol;i++{
+                        for j := argsBeforeRow;j>0;j--{
+                            if col_idx-j>0 && len(rows[row_idx+i]) > col_idx-j{
+                                matched(file, s_name, row_idx+i, col_idx-j, rows[row_idx+i][col_idx-j])
+                            }
+                        }
+                        if len(rows[row_idx+i]) > col_idx{
+                            matched(file, s_name, row_idx+i, col_idx, rows[row_idx+i][col_idx])
+                        }
+                        for j := 1; argsAfterRow>=j;j++{
+                            if len(rows[row_idx+i]) > col_idx+j{
+                                matched(file, s_name, row_idx+i, col_idx+j, rows[row_idx+i][col_idx+j])
+                            }
+                        }
+                    }
+
+
+                                }
+                        }
+                }
+    }
+}
+
+func matched(fileName string, sheetName string, rowIdx int, colIdx int, text string) {
+    cname, err := excelize.CoordinatesToCellName(colIdx + 1, rowIdx + 1)
+    if err != nil {
+                fmt.Fprintf(os.Stderr, "'%s': coordinatesToCellName failed.\n", fileName)
+                return
+        }
+
+    if argsPrintRow {
+        fmt.Printf("![%s]:[%s]:%s:%s\n", fileName, sheetName, cname, text)
+    } else{
+        fmt.Printf("[%s]:[%s]:%s:%s\n", fileName, sheetName, cname, text)
+    }
+
+}
